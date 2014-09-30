@@ -23,9 +23,10 @@ Executable idris-llvm
                 , mtl
                 , process
                 , transformers
+                , bytestring
                 , vector
-                , llvm-general == 3.3.8.*
-                , llvm-general-pure == 3.3.8.*
+                , llvm-general == 3.4.2.*
+                , llvm-general-pure == 3.4.2.*
 
   other-modules: IRTS.CodegenLLVM
   cpp-options:   -DIDRIS_LLVM

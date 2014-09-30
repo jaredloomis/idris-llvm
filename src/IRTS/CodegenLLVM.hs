@@ -2,6 +2,8 @@
 {-# LANGUAGE CPP #-}
 module IRTS.CodegenLLVM (codegenLLVM) where
 
+import qualified Data.ByteString as B
+
 import IRTS.CodegenCommon
 import IRTS.Lang
 import IRTS.Simplified
@@ -115,17 +117,25 @@ codegenLLVM' defs triple cpu optimize file outty = withContext $ \context -> do
   initializeAllTargets
   (target, _) <- failInIO $ lookupTarget Nothing triple
   withTargetOptions $ \options ->
-      withTargetMachine target triple cpu S.empty options R.Default CM.Default CGO.Default $ \tm ->
+      withTargetMachine target triple cpu S.empty options
+                        R.Default CM.Default CGO.Default $ \tm ->
           do layout <- getTargetMachineDataLayout tm
              let ast = codegen (Target triple layout) (map snd defs)
-             result <- runErrorT .  MO.withModuleFromAST context ast $ \m ->
+             result <- runErrorT .  MO.withModuleFromAST context ast $ \m -> do
+{-
+                        llStr <- MO.moduleLLVMAssembly m
+                        putStrLn llStr
+-}
+--
                        do let opts = PM.defaultCuratedPassSetSpec
                                      { PM.optLevel = Just optimize
                                      , PM.simplifyLibCalls = Just True
                                      , PM.useInlinerWithThreshold = Just 225
                                      }
-                          when (optimize /= 0) $ PM.withPassManager opts $ void . flip PM.runPassManager m
+                          when (optimize /= 0) $
+                              PM.withPassManager opts $ void . flip PM.runPassManager m
                           outputModule tm file outty m
+--
              case result of
                Right _ -> return ()
                Left msg -> ierror msg
@@ -134,8 +144,12 @@ failInIO :: ErrorT String IO a -> IO a
 failInIO = either fail return <=< runErrorT
 
 outputModule :: TargetMachine -> FilePath -> OutputType -> MO.Module -> IO ()
-outputModule _  file Raw    m = failInIO $ MO.writeBitcodeToFile file m
-outputModule tm file Object m = failInIO $ MO.writeObjectToFile tm file m
+outputModule _  file Raw    m =
+    objectBS <- failInIO $ MO.moduleBitcode tm m
+    B.writeFile file objectBS
+outputModule tm file Object m = do
+    objectBS <- failInIO $ MO.moduleObject tm m
+    B.writeFile file objectBS
 outputModule tm file Executable m = withTmpFile $ \obj -> do
   outputModule tm obj Object m
   cc <- getCC
@@ -214,6 +228,7 @@ initDefs tgt =
           ]
           (Do $ Ret (Just (LocalReference (UnName 1))) [])
         ]
+{-
     , GlobalDefinition $ globalVariableDefaults
       { G.name = Name "__idris_floatFmtStr"
       , G.linkage = L.Internal
@@ -222,15 +237,18 @@ initDefs tgt =
       , G.type' = ArrayType 5 (IntegerType 8)
       , G.initializer = Just $ C.Array (IntegerType 8) (map (C.Int 8 . fromIntegral . fromEnum) "%g" ++ [C.Int 8 0])
       }
+-}
     , rtsFun "floatStr" ptrI8 [FloatingPointType 64 IEEE]
         [ BasicBlock (UnName 0)
           [ UnName 1 := simpleCall "GC_malloc_atomic" [ConstantOperand (C.Int (tgtWordSize tgt) 21)]
+{-
           , UnName 2 := simpleCall "snprintf"
                        [ LocalReference (UnName 1)
                        , ConstantOperand (C.Int (tgtWordSize tgt) 21)
                        , ConstantOperand $ C.GetElementPtr True (C.GlobalReference . Name $ "__idris_floatFmtStr") [C.Int 32 0, C.Int 32 0]
                        , LocalReference (UnName 0)
                        ]
+-}
           ]
           (Do $ Ret (Just (LocalReference (UnName 1))) [])
         ]
